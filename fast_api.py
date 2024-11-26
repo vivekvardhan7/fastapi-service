@@ -1,12 +1,12 @@
-from fastapi import FastAPI, Request
+
 import cv2
 import mediapipe as mp
 import requests
 from datetime import timedelta
 import tempfile
-import os
+import os 
 
-app = FastAPI()
+
 
 # Initialize MediaPipe for face and landmark detection
 mp_face_detection = mp.solutions.face_detection
@@ -72,10 +72,8 @@ def analyze_video_stream(video_path):
     
     return output_text
 
-@app.post("/analyze/")
-async def analyze_video_endpoint(request: Request):
-    data = await request.json()
-    video_url = data.get("video_url")
+
+def analyze_video_endpoint(video_url):
     if not video_url:
         return {"error": "No video URL provided"}
 
@@ -92,11 +90,3 @@ async def analyze_video_endpoint(request: Request):
 
     return {"text_result": result_text}
 
-# Run the API with: uvicorn fast_api:app --reload
-# Run the API with: uvicorn fast_api:app --reload
-#FastAPI - for creating the API endpoints-pip install fastapi
-#Uvicorn - ASGI server to serve FastAPI applications-pip install uvicorn
-#OpenCV - for video handling and frame processing-pip install opencv-python
-#MediaPipe - for face detection and landmark analysis-pip install mediapipe
-#Requests - to download the video file from a URL-pip install requests
-#post this in postman ---> http://127.0.0.1:8000/analyze/
