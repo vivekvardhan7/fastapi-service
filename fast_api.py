@@ -98,7 +98,7 @@ def analyze_video_endpoint(video_url):
 
 
 # requirements
-# cv2
+# opencv-python
 # mediapipe 
 # requests
 # tempfile
