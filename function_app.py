@@ -19,8 +19,8 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
 
     if video_url:
         result=analyze_video_endpoint(video_url)
-        return func.HttpResponse(result)
-        # return func.HttpResponse(f"{result}")
+        # return func.HttpResponse(result)
+        return func.HttpResponse(f"{result}")
     else:
         return func.HttpResponse(
              "This HTTP triggered function executed successfully. Pass a video_url in the query string or in the request body for a personalized response.",
