@@ -1,8 +1,4 @@
-# Run the API with: uvicorn fast_api:app --reload
-# Run the API with: uvicorn fast_api:app --reload
-#FastAPI - for creating the API endpoints-pip install fastapi
-#Uvicorn - ASGI server to serve FastAPI applications-pip install uvicorn
-#OpenCV - for video handling and frame processing-pip install opencv-python
-#MediaPipe - for face detection and landmark analysis-pip install mediapipe
-#Requests - to download the video file from a URL-pip install requests
-#post this in postman ---> http://127.0.0.1:8000/analyze/
+
+opencv-python
+mediapipe 
+requests
