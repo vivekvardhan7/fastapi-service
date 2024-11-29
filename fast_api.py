@@ -1,17 +1,23 @@
-from fastapi import FastAPI, Request
 import cv2
+from dotenv import load_dotenv
 import mediapipe as mp
 import requests
-from datetime import timedelta
 import tempfile
 import os
-
-app = FastAPI()
+from azure.storage.blob import BlobServiceClient, ContentSettings
+load_dotenv()
 
 # Initialize MediaPipe for face and landmark detection
 mp_face_detection = mp.solutions.face_detection
-mp_face_mesh = mp.solutions.face_mesh
 mp_drawing = mp.solutions.drawing_utils
+
+# Azure Blob Storage Configuration
+AZURE_CONNECTION_STRING = os.getenv("proxy_connect_str")
+AZURE_CONTAINER_NAME = os.getenv("proxy_container_name")
+
+# Azure Blob Storage Client
+blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
+blob_container_client = blob_service_client.get_container_client(AZURE_CONTAINER_NAME)
 
 def download_video(url):
     """Download video to a temporary file and return the path."""
@@ -24,12 +30,40 @@ def download_video(url):
     else:
         return None
 
+def upload_to_azure(file_path, blob_name):
+    """Upload a file to Azure Blob Storage and return the file URL."""
+    try:
+        with open(file_path, "rb") as data:
+            content_settings = ContentSettings(content_type="image/jpeg")
+            blob_client = blob_container_client.get_blob_client(blob_name)
+            blob_client.upload_blob(data, overwrite=True, content_settings=content_settings)
+        return blob_client.url
+    except Exception as e:
+        print(f"Failed to upload to Azure: {e}")
+        return None
+
+def save_screenshot(frame, timestamp, video_name):
+    """Save the current frame as a screenshot and upload it to Azure."""
+    screenshot_name = f"{video_name}_screenshot_{timestamp}.jpg"
+    local_path = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
+    cv2.imwrite(local_path, frame)  # Save frame locally
+    
+    # Upload to Azure
+    azure_url = upload_to_azure(local_path, screenshot_name)
+    
+    # Clean up local file
+    os.remove(local_path)
+    
+    return azure_url
+
 def analyze_video_stream(video_path):
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
     fps = cap.get(cv2.CAP_PROP_FPS) if cap.get(cv2.CAP_PROP_FPS) > 0 else 30  # Fallback if FPS is not provided
-    cheating_detected = False
-    head_movements = []  # To store movements with timestamps
+    results_list = []  # To store the results as per the desired format
+
+    last_processed_second = -1  # Track the last second processed to avoid duplicates
+    video_name = os.path.basename(video_path).split('.')[0]  # Extract video name for blob naming
 
     with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as face_detection:
         while cap.isOpened():
@@ -38,44 +72,61 @@ def analyze_video_stream(video_path):
                 break
 
             frame_count += 1
-            timestamp = str(timedelta(seconds=int(frame_count / fps)))  # Get timestamp in HH:MM:SS format
+            timestamp_in_seconds = int(frame_count / fps)  # Get timestamp in seconds
 
-            # Convert frame to RGB for MediaPipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_detection.process(rgb_frame)
+            # Process only once per second
+            if timestamp_in_seconds > last_processed_second:
+                last_processed_second = timestamp_in_seconds
 
-            # Count faces
-            if results.detections:
-                face_count = len(results.detections)
-                if face_count > 1:
-                    cheating_detected = True
-                    head_movements.append(f"{timestamp}: Cheating detected - multiple faces")
 
-                for detection in results.detections:
-                    # Head orientation analysis (simplified for example)
-                    # Here we would ideally use landmarks to check if head is left, right, or forward
-                    # Placeholder: Assume forward for simplicity, modify with proper head detection logic
+                # Convert frame to RGB for MediaPipe
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_detection.process(rgb_frame)
+
+                # Default values
+                head_position = "unknown"
+                multiple_face_detection = False
+
+                if results.detections:
+                    face_count = len(results.detections)
+                    if face_count > 1:
+                        multiple_face_detection = True
                     
-                    head_position = "forward"  # Replace this with real orientation logic
-                    head_movements.append(f"{timestamp}: Head position {head_position}")
-            else:
-                # If no face is detected, we could log as "away" if needed
-                head_movements.append(f"{timestamp}: No face detected (away)")
+                    for detection in results.detections:
+                        # Improved head orientation analysis
+                        bbox = detection.location_data.relative_bounding_box
+                        if bbox.xmin < 0.3:
+                            head_position = "left"
+                        elif bbox.xmin > 0.7:
+                            head_position = "right"
+                        else:
+                            head_position = "forward"
+                else:
+                    head_position = "away"  # No face detected
+                if head_position != "forward":
+                        # Save the current frame and upload to Azure
+                        azure_url = save_screenshot(frame, timestamp_in_seconds, video_name)
+                        results_list.append({
+                    "time": timestamp_in_seconds,
+                    "head_position": head_position,
+                    "multiple_face_detection": multiple_face_detection,
+                    "screenshot_url": azure_url      })
+                        
+                else:
+                # Append results for the current timestamp
+                    results_list.append({
+                    "time": timestamp_in_seconds,
+                    "head_position": head_position,
+                    "multiple_face_detection": multiple_face_detection
+                })
 
     cap.release()
-    
-    # Prepare text output
-    output_text = "Video Analysis Report:\n"
-    output_text += "\n".join(head_movements)
-    if cheating_detected:
-        output_text += "\n\nNote: Cheating detected (multiple faces at some points in the video)."
-    
-    return output_text
+    return results_list
 
-@app.post("/analyze/")
-async def analyze_video_endpoint(request: Request):
-    data = await request.json()
-    video_url = data.get("video_url")
+
+def analyze_video_endpoint(video_url):
+    # data = await request.json()
+    # video_url = data.get("video_url")
     if not video_url:
         return {"error": "No video URL provided"}
 
@@ -85,18 +136,23 @@ async def analyze_video_endpoint(request: Request):
         return {"error": "Failed to download video from the URL provided"}
 
     # Perform analysis on the video
-    result_text = analyze_video_stream(video_path)
+    result = analyze_video_stream(video_path)
 
     # Clean up the downloaded video file
     os.remove(video_path)
 
-    return {"text_result": result_text}
+    return {"analysis_result": result}
 
-# Run the API with: uvicorn fast_api:app --reload
-# Run the API with: uvicorn fast_api:app --reload
-#FastAPI - for creating the API endpoints-pip install fastapi
-#Uvicorn - ASGI server to serve FastAPI applications-pip install uvicorn
-#OpenCV - for video handling and frame processing-pip install opencv-python
-#MediaPipe - for face detection and landmark analysis-pip install mediapipe
-#Requests - to download the video file from a URL-pip install requests
-#post this in postman ---> http://127.0.0.1:8000/analyze/
+
+# # Example usage
+# video_url = "https://jobfairreaidy.blob.core.windows.net/recordings/6734e016df0d8f51c5d50c38.mp4"
+# result = analyze_video_endpoint(video_url)
+# print(result)
+
+# requirements
+# opencv-python
+# mediapipe 
+# requests
+# azure_functions
+# azure_storage_blob 
+# python_dotenv
