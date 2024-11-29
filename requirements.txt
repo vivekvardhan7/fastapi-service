@@ -7,6 +7,7 @@
 #Requests - to download the video file from a URL-pip install requests
 #post this in postman ---> http://127.0.0.1:8000/analyze/
 
+
 opencv-python
 mediapipe 
 requests

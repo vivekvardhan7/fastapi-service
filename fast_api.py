@@ -125,6 +125,8 @@ def analyze_video_stream(video_path):
 
 
 def analyze_video_endpoint(video_url):
+    # data = await request.json()
+    # video_url = data.get("video_url")
     if not video_url:
         return {"error": "No video URL provided"}
 
